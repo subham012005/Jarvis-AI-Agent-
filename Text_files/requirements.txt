@@ -1,0 +1,9 @@
+langchain_google_genai
+langchain
+dotenv
+langchain_core
+langchain_community
+SpeechRecognition
+playwright
+pvporcupine==1.9.5 
+pyaudio
