@@ -1,68 +1,131 @@
+import os
+import sys
 import time
-import struct
-import pyaudio
-import pvporcupine  # assuming you're using Picovoice
-from voice_and_speak.voice_utils import speak # your async speak function wrapper
-from main_and_prompt.jarviss import run_jarvis 
-# Define hotwords and Porcupine
-keywords = ["jarvis", "picovoice"]
-porcupine = pvporcupine.create(keywords=keywords)
+import threading
+import numpy as np
+import sounddevice as sd
+from openwakeword.model import Model
 
-p = pyaudio.PyAudio()
-stream = None
+# Add parent dir to path for imports
+sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 try:
-    # Try to open audio stream
-    stream = p.open(
-        rate=porcupine.sample_rate,
-        channels=1,
-        format=pyaudio.paInt16,
-        input=True,
-        frames_per_buffer=porcupine.frame_length
+    from voice_and_speak.voice_utils import speak
+    from main_and_prompt.jarviss import agent
+    import speech_recognition as sr
+except ImportError as e:
+    print(f"Import error: {e}")
+    def speak(t): print(f"SPEAK: {t}")
+    agent = None
+
+# Configuration
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "hey_jarvis.onnx")
+MEL_PATH = os.path.join(BASE_DIR, "melspectrogram.onnx")
+EMB_PATH = os.path.join(BASE_DIR, "embedding.onnx")
+
+def main():
+    print("[🟢] Initializing J.A.R.V.I.S. Hotword Detection (openWakeWord)...")
+    
+    if not os.path.exists(MODEL_PATH):
+        print(f"[❌] Critical Error: Model file not found at {MODEL_PATH}")
+        return
+
+    # Load Model
+    oww_model = Model(
+        wakeword_models=[MODEL_PATH],
+        inference_framework="onnx",
+        melspec_model_path=MEL_PATH if os.path.exists(MEL_PATH) else None,
+        embedding_model_path=EMB_PATH if os.path.exists(EMB_PATH) else None
     )
 
-    print("[🟢] Listening... Say 'Jarvis' to activate or 'Picovoice' to exit.")
-    speak("Listening... Say 'Jarvis' to activate or 'Picovoice' to exit.")
+    print(f"[🎤] Listening for 'Jarvis'...")
+    speak("System online. Listening for your command, sir.")
 
-    count = 0
-    while True:
+    is_listening = False
+    recognizer = sr.Recognizer()
+
+    def process_command():
+        nonlocal is_listening
+        is_listening = True
         try:
-            pcm = stream.read(porcupine.frame_length, exception_on_overflow=False)
-            pcm = struct.unpack_from("h" * porcupine.frame_length, pcm)
-            index = porcupine.process(pcm)
-        except OSError as e:
-            print("[❌] Error reading audio stream:", e)
-            break
-
-        if index >= 0:
-            keyword = keywords[index]
-            count += 1
-            print(f"[🎤] Hotword '{keyword}' detected! Count: {count}") 
-            speak(f"Hotword '{keyword}' detected! Count: {count}")
-
-            if keyword == "picovoice":
-                print("[🛑] Terminate command detected. Shutting down...")
-                speak("Terminate command detected. Shutting down...")
-                break
-
-            # Call your assistant
-             # Import the function to run your assistant
-            run_jarvis()
-
-            time.sleep(1.5)
-            print("[🕓] Waiting again...")                                                      
+            print("[🎤] Listening for command...")
             
-            speak("Waiting again for your command, sir.")
+            # Play premium sci-fi initialization chime
+            try:
+                import winsound
+                winsound.Beep(2000, 80)
+                winsound.Beep(2600, 120)
+            except Exception:
+                pass
+            
+            # Listen for command
+            with sd.RawInputStream(samplerate=16000, blocksize=16000*5, dtype='int16', channels=1) as stream:
+                recording, overflowed = stream.read(16000 * 5) # 5 seconds
+                audio_data = sr.AudioData(recording, 16000, 2)
+            
+            print("[🧠] Recognizing...")
+            user_input = recognizer.recognize_google(audio_data)
+            print(f"[💬] You said: {user_input}")
+            
+            # Play sci-fi success feedback chime
+            try:
+                import winsound
+                winsound.Beep(2600, 100)
+            except Exception:
+                pass
+            
+            if agent:
+                print("[🤖] Jarvis is thinking...")
+                response = agent.invoke(
+                    {"messages": [{"role": "user", "content": user_input}]},
+                    {"configurable": {"thread_id": "standalone_voice"}},
+                )
+                res_content = response["messages"][-1].content
+                print(f"[🤖] Jarvis: {res_content}")
+                speak(res_content)
+            else:
+                print("[❌] Agent not available.")
+                
+        except sr.UnknownValueError:
+            print("[❓] Could not understand audio.")
+            # Play a failure chime
+            try:
+                import winsound
+                winsound.Beep(1200, 100)
+                winsound.Beep(800, 150)
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[❌] Error processing command: {e}")
+        finally:
+            is_listening = False
+            print("[🎤] Returning to hotword detection...")
 
-except KeyboardInterrupt:
-    print("\n[✋] Exiting hotword listener manually.")  
-    
-    speak("Exiting hotword listener manually.")
+    def audio_callback(indata, frames, time_info, status):
+        if is_listening:
+            return
+            
+        # Predict using openWakeWord
+        prediction = oww_model.predict(indata)
+        
+        for model_name, score in prediction.items():
+            if score > 0.5: # Slightly more sensitive
+                print(f"[🔥] Detected '{model_name}'! Score: {score:.2f}")
+                threading.Thread(target=process_command, daemon=True).start()
 
-finally:
-    if stream:
-        if stream.is_active():
-            stream.stop_stream()
-        stream.close()
-    porcupine.delete()
-    p.terminate()
+    # Start audio stream
+    try:
+        with sd.InputStream(samplerate=16000, 
+                            channels=1, 
+                            blocksize=1280, 
+                            callback=audio_callback):
+            while True:
+                time.sleep(1)
+    except KeyboardInterrupt:
+        print("\n[✋] Shutting down...")
+    except Exception as e:
+        print(f"[❌] Audio Error: {e}")
+
+if __name__ == "__main__":
+    main()

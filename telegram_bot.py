@@ -39,6 +39,31 @@ def send_telegram_message(text: str, retries: int = 3):
 
     return None  # NEVER crash app
 
+# ================== SEND DOCUMENT ==================
+def send_telegram_document(file_path: str, caption: str = "", retries: int = 3):
+    url = f"{BASE_URL}/sendDocument"
+    
+    if not os.path.exists(file_path):
+        return None
+        
+    for attempt in range(retries):
+        try:
+            with open(file_path, 'rb') as f:
+                files = {'document': f}
+                data = {'chat_id': CHAT_ID, 'caption': caption}
+                res = requests.post(url, data=data, files=files, timeout=60)
+                res_data = res.json()
+                
+                if res_data.get("ok"):
+                    return res_data
+                    
+                print("Telegram API error:", res_data)
+        except requests.exceptions.RequestException as e:
+            print(f"[SendDocument] Attempt {attempt + 1} failed:", e)
+            time.sleep(5)
+            
+    return None
+
 
 # ================== FETCH MESSAGES ==================
 def fetch_telegram_messages(offset: int | None = None):

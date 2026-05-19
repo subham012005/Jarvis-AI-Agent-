@@ -21,7 +21,13 @@ load_dotenv()
 model = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.7)
 
 # Tools for agent imported from jarvis/tool/tool.py
-tool = [search_tool,time_tool,open_files_tool,website_opener_tool,get_application_path_tool,get_contact_number_tool,close_file_tool,send_msg_calls_tool,get_notification_tool] 
+tool = [
+    search_tool, time_tool, open_files_tool, website_opener_tool, 
+    get_application_path_tool, get_contact_number_tool, close_file_tool, 
+    send_msg_calls_tool, get_notification_tool, search_local_files_tool, 
+    share_file_tool, get_whatsapp_chats_tool, read_whatsapp_messages_tool, 
+    send_whatsapp_media_tool, add_contact_tool, browser_control_tool
+]
 
 agent = create_agent(
     tools=tool,
@@ -56,8 +62,11 @@ def run_jarvis():
                             respo = agent.invoke(
                                 {"messages": [{"role": "user", "content": user_input}]},
                                 {"configurable": {"thread_id": 6115649410 }},
-                           )
-                            response_text = respo["messages"][-1].content
+                            )
+                            if "messages" in respo and len(respo["messages"]) > 0:
+                                response_text = respo["messages"][-1].content
+                            else:
+                                response_text = "I'm sorry, I couldn't generate a response."
                         except Exception as e:
                             print(f"Error invoking agent: {e}")
                             response_text = f"Error invoking agent: {e}"

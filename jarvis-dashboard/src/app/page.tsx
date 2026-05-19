@@ -1,25 +1,33 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Cpu, Activity, Globe, Zap, Clock, Bot, Wifi, FolderOpen, Terminal, AlertTriangle, MessageSquare } from "lucide-react";
+import { 
+  Cpu, Activity, Globe, Zap, Clock, Bot, Wifi, 
+  FolderOpen, Terminal, AlertTriangle, MessageSquare,
+  Shield, Server, HardDrive, Share2, Layers, Search,
+  Target, Brain, Database, Cloud, Lock
+} from "lucide-react";
 
 import CommandBar      from "@/components/CommandBar";
 import HologramCore    from "@/components/HologramCore";
-import MetricCard      from "@/components/MetricCard";
 import AgentFleet      from "@/components/AgentFleet";
 import LiveLog         from "@/components/LiveLog";
 import SystemTelemetry from "@/components/SystemTelemetry";
 import ChatPanel       from "@/components/ChatPanel";
-import BottomNav       from "@/components/BottomNav";
 import InputInterface  from "@/components/InputInterface";
+import BottomNav       from "@/components/BottomNav";
+import AlertPanel      from "@/components/AlertPanel";
+import InsightsPanel   from "@/components/InsightsPanel";
+import MissionTimeline from "@/components/MissionTimeline";
 
 interface SystemStats {
   cpu: number; ram: number; disk: number; uptime: string; db_health: string;
+  net_latency?: string; net_packets_tx?: string; net_packets_rx?: string; net_connections?: number;
 }
 
 interface LogEntry {
-  id: number; ts: string; severity: any; source: string; message: string;
+  id: number; ts: string; severity: string; source: string; message: string;
 }
 
 interface Message {
@@ -35,6 +43,7 @@ export default function DashboardPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [isServerVoice, setIsServerVoice] = useState(false);
   const [activeView, setActiveView] = useState("home");
   const [language, setLanguage] = useState<"en" | "hi">("en");
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -45,18 +54,26 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<SystemStats>({
     cpu: 0, ram: 0, disk: 0, uptime: "---", db_health: "Connecting..."
   });
-  const [intelligenceError, setIntelligenceError] = useState<string | null>(null);
   
+  const [statsHistory, setStatsHistory] = useState({
+    cpu: Array(20).fill(0),
+    ram: Array(20).fill(0),
+    network: Array(20).fill(0)
+  });
+
+  const telegramChatHistory = React.useMemo(() => {
+    const combined: Message[] = [];
+    telegramMessages.forEach(msg => {
+      combined.push({ role: "user", text: msg.user_text, ts: msg.ts });
+      combined.push({ role: "jarvis", text: msg.text, ts: msg.ts });
+    });
+    return combined.sort((a, b) => a.ts.localeCompare(b.ts));
+  }, [telegramMessages]);
+
   const socketRef = useRef<WebSocket | null>(null);
   const logIdCounter = useRef(0);
 
   const agentState = isListening ? "listening" : isProcessing ? "processing" : isSpeaking ? "speaking" : "idle";
-
-  useEffect(() => {
-    if (typeof window !== "undefined" && window.speechSynthesis) {
-      window.speechSynthesis.getVoices();
-    }
-  }, []);
 
   useEffect(() => {
     const connect = () => {
@@ -74,12 +91,27 @@ export default function DashboardPage() {
               setTelegramMessages(msg.data.telegram_history);
             }
             break;
-          case "system_stats": setStats(msg.data); break;
+          case "system_stats": 
+            setStats(msg.data);
+            setStatsHistory(prev => ({
+              cpu: [...prev.cpu.slice(1), msg.data.cpu],
+              ram: [...prev.ram.slice(1), msg.data.ram],
+              network: [...prev.network.slice(1), Math.random() * 100]
+            }));
+            break;
           case "log": setLogs(prev => [{ ...msg.data, id: ++logIdCounter.current }, ...prev].slice(0, 100)); break;
           case "chat_update": setChatHistory(prev => [...prev, msg.data]); break;
           case "telegram_update": setTelegramMessages(prev => [...prev, msg.data]); break;
           case "thought_process": setThoughtProcess(msg.data); break;
           case "agents_sync": setAgents(msg.data); setIsProcessing(msg.data.some((a: any) => a.status === "busy")); break;
+          case "hotword_detected": 
+            setIsServerVoice(true);
+            setIsListening(true); 
+            break;
+          case "voice_stop":
+            setIsServerVoice(false);
+            setIsListening(false);
+            break;
           case "response": handleJarvisResponse(msg.data); break;
         }
       };
@@ -91,602 +123,245 @@ export default function DashboardPage() {
   }, []);
 
   const handleJarvisResponse = useCallback((rawResponse: string) => {
-    let displayText = rawResponse;
     let ttsText = rawResponse;
-
-    // Dual-Output Protocol: Try to parse JSON if we are in Hindi mode
     if (language === "hi") {
       try {
         const json = JSON.parse(rawResponse);
-        if (json.display_text && json.tts_text) {
-          displayText = json.display_text;
-          ttsText = json.tts_text;
-        }
-      } catch (e) {
-        // Fallback to raw text if not JSON
-        console.log("Response was not JSON, using raw text.");
-      }
+        if (json.tts_text) ttsText = json.tts_text;
+      } catch (e) {}
     }
-
-    // Removed local Chat Panel update to prevent doubling (handled by server's chat_update)
     
-    if (!("speechSynthesis" in window)) return;
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
     
-    // Speak using TTS text (Proper Devanagari Hindi if applicable)
     const utterance = new SpeechSynthesisUtterance(ttsText);
     const voices = window.speechSynthesis.getVoices();
     
     if (language === "hi") {
       utterance.lang = "hi-IN";
-      const hiVoice = voices.find(v => v.name.includes("Google हिन्दी") || v.name.includes("Hindi") || v.lang === "hi-IN");
-      if (hiVoice) {
-        utterance.voice = hiVoice;
-        utterance.pitch = 1.1;
-        utterance.rate = 0.95;
-      }
+      const hiVoice = voices.find(v => v.lang === "hi-IN");
+      if (hiVoice) utterance.voice = hiVoice;
     } else {
       utterance.lang = "en-GB";
-      const enVoice = voices.find(v => v.name.includes("Google UK English Male") || v.name.includes("Daniel") || v.lang.includes("en-GB"));
+      const enVoice = voices.find(v => v.lang.includes("en-GB"));
       if (enVoice) utterance.voice = enVoice;
     }
 
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
+    utterance.onstart = () => {
+      setIsSpeaking(true);
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({ type: "speaking_state", speaking: true }));
+      }
+    };
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({ type: "speaking_state", speaking: false }));
+      }
+    };
     window.speechSynthesis.speak(utterance);
   }, [language]);
 
   const sendCommand = useCallback((cmd: string) => {
-    setIsProcessing(true);
-    setIntelligenceError(null);
-
     if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ 
-        type: "command", 
-        data: cmd, 
-        lang: language 
-      }));
-    } else {
-      setTimeout(() => {
-        setIsProcessing(false);
-        const mockRes = language === "hi" 
-          ? JSON.stringify({
-              display_text: `Haan bhai, kya haal hai? Maine suna ki tune kaha: "${cmd}"`,
-              tts_text: `हाँ भाई, क्या हाल है? मैंने सुना कि तुमने कहा: ${cmd}`
-            })
-          : `I have received your command: "${cmd}". Rebuilding the neural patterns now...`;
-        handleJarvisResponse(mockRes);
-      }, 2000);
+      setIsProcessing(true);
+      socketRef.current.send(JSON.stringify({ type: "command", data: cmd, lang: language }));
     }
-  }, [handleJarvisResponse, language]);
+  }, [language]);
+
+  const killCommand = useCallback(() => {
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: "kill_command" }));
+    }
+  }, []);
+
+  const sendVoiceCommand = useCallback(() => {
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: "start_voice" }));
+    }
+  }, []);
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-[#050812] selection:bg-cyan-500/30">
-      {/* Top HUD Bar */}
+    <div className="flex flex-col h-screen overflow-hidden bg-black selection:bg-blue-500/30 text-white font-inter">
+      {/* Background Neural Matrix */}
+      <div className="neural-grid z-0" />
+      <div className="fixed inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(59,130,246,0.03)_0%,transparent_100%)] pointer-events-none" />
+      <div className="crt-overlay z-[100]" />
+      
+      {/* HUD HEADER */}
       <CommandBar 
         onSendCommand={sendCommand} 
+        onVoiceCommand={sendVoiceCommand}
         isSpeaking={isSpeaking}
         isProcessing={isProcessing}
         isConnected={isConnected}
         isListening={isListening}
+        isServerVoice={isServerVoice}
         onListeningChange={setIsListening}
         language={language}
         onLanguageChange={setLanguage}
       />
 
-      <main className="flex-1 overflow-hidden p-6 grid grid-cols-[380px_1fr_420px] gap-6">
-        {/* Left Column */}
-        <div className="flex flex-col gap-6 overflow-hidden">
-           <InputInterface 
-              onSendCommand={sendCommand} 
-              isProcessing={isProcessing} 
-              isListening={isListening} 
-              onListeningChange={setIsListening} 
-           />
-           <div className="flex-1 overflow-hidden flex flex-col gap-3 min-h-0">
-             <div className="overflow-hidden shrink-0 min-h-0 flex-[0_0_auto]" style={{maxHeight: '45%'}}>
-               <AgentFleet agents={agents} />
-             </div>
+      <main className={`flex-1 w-full max-w-[2000px] mx-auto p-6 grid ${activeView === "analytics" ? "grid-cols-1" : activeView === "network" ? "grid-cols-[450px_1fr]" : "grid-cols-[450px_1fr_450px]"} gap-6 relative z-10 overflow-hidden`}>
+        
+        {/* LEFT COLUMN: Input, Diagnostics & Sequence */}
+        {activeView !== "analytics" && (
+          <section className="flex flex-col gap-6 overflow-hidden">
+             {activeView !== "network" && (
+               <InputInterface 
+                  onSendCommand={sendCommand} 
+                  onVoiceCommand={sendVoiceCommand}
+                  onKillCommand={killCommand}
+                  isProcessing={isProcessing} 
+                  isListening={isListening} 
+                  isServerVoice={isServerVoice}
+                  onListeningChange={setIsListening} 
+                  language={language}
+               />
+             )}
              
-             {/* AI Neural Thought Chain */}
-             <div className="flex-1 overflow-hidden hud-panel bracket bg-violet-950/10 border-violet-500/20 flex flex-col min-h-0">
-               <div className="px-4 py-3 border-b border-violet-500/20 bg-violet-500/5 flex items-center justify-between shrink-0">
-                 <div className="flex items-center gap-2">
-                   <div className="w-2 h-2 rounded-full bg-violet-400 animate-pulse" />
-                   <span className="text-violet-400 font-mono text-[9px] uppercase tracking-widest font-bold">Neural Thought Chain</span>
-                 </div>
-                 {thoughtProcess && (
-                   <span className="text-[8px] font-mono text-violet-400/50 uppercase">{thoughtProcess.ts}</span>
-                 )}
-               </div>
-               <div className="flex-1 overflow-y-auto p-3 custom-scrollbar space-y-2">
-                 {!thoughtProcess ? (
-                   <div className="flex flex-col items-center justify-center h-full opacity-20 text-violet-400">
-                     <Cpu className="w-6 h-6 mb-2 animate-pulse" />
-                     <span className="text-[9px] font-mono uppercase tracking-widest">Awaiting neural activation...</span>
-                   </div>
-                 ) : (
-                   <>
-                     <div className="text-[8px] font-mono text-violet-400/50 uppercase tracking-widest mb-2 pb-2 border-b border-violet-500/10">
-                       Query: <span className="text-violet-300">{thoughtProcess.query?.slice(0, 40)}{thoughtProcess.query?.length > 40 ? "..." : ""}</span>
-                     </div>
-                     {thoughtProcess.steps.map((step: any, i: number) => (
-                       <motion.div
-                         key={i}
-                         initial={{ opacity: 0, x: -10 }}
-                         animate={{ opacity: 1, x: 0 }}
-                         transition={{ delay: i * 0.05 }}
-                         className={`flex gap-2 p-2 rounded text-[9px] font-mono border ${
-                           step.type === "tool_call"
-                             ? "bg-amber-500/10 border-amber-500/20 text-amber-300"
-                             : step.type === "tool_result"
-                             ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300"
-                             : step.type === "final"
-                             ? "bg-cyan-500/10 border-cyan-500/20 text-cyan-300"
-                             : "bg-violet-500/10 border-violet-500/20 text-violet-300"
-                         }`}
-                       >
-                         <span className="shrink-0 mt-0.5">
-                           {step.type === "tool_call" ? "⚡" : step.type === "tool_result" ? "✓" : step.type === "final" ? "★" : "◈"}
-                         </span>
-                         <div className="min-w-0">
-                           <div className="font-bold uppercase tracking-wide mb-0.5">{step.label}</div>
-                           {step.detail && <div className="opacity-70 break-words leading-relaxed">{step.detail}</div>}
-                         </div>
-                       </motion.div>
-                     ))}
-                   </>
-                 )}
-               </div>
-             </div>
-           </div>
-        </div>
-
-        {/* Center Column */}
-        <div className="flex flex-col overflow-hidden relative">
-           <div className="flex-1 relative overflow-hidden">
-              <AnimatePresence mode="wait">
-                {activeView === "home" && (
-                  <motion.div 
-                    key="home"
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 1.05 }}
-                    className="absolute inset-0 flex flex-col items-center justify-center p-8"
-                  >
-                     {intelligenceError && (
-                       <motion.div 
-                         initial={{ opacity: 0, y: -20 }}
-                         animate={{ opacity: 1, y: 0 }}
-                         className="w-full max-w-2xl mb-8 hud-panel border-red-500/50 bg-red-500/10 p-5 relative overflow-hidden group"
-                       >
-                         <div className="absolute top-0 left-0 w-1 h-full bg-red-500 shadow-[0_0_15px_rgba(239,68,68,0.5)]" />
-                         <div className="flex gap-4">
-                           <div className="shrink-0 w-12 h-12 rounded bg-red-500/20 flex items-center justify-center text-red-500 border border-red-500/30">
-                             <AlertTriangle className="w-7 h-7 animate-pulse" />
-                           </div>
-                           <div className="flex-1">
-                             <h4 className="text-[11px] font-mono font-bold text-red-400 uppercase tracking-widest mb-2">
-                               Integrity Breach / Execution Failed
-                             </h4>
-                             <p className="text-xs font-mono text-red-200/80 leading-relaxed mb-5">
-                               {intelligenceError}
-                             </p>
-                             <button 
-                               onClick={() => setActiveView("settings")}
-                               className="w-full py-3 bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-400 text-[10px] font-mono font-bold uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 group-hover:gap-3"
-                             >
-                               Configure Intelligence Providers <Zap className="w-3 h-3" />
-                             </button>
-                           </div>
-                         </div>
-                       </motion.div>
-                     )}
-                     <HologramCore state={agentState} />
-                  </motion.div>
-                )}
-
-                {activeView === "analytics" && (
-                  <motion.div 
-                    key="analytics"
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -20 }}
-                    className="absolute inset-0 flex flex-col gap-4 p-4 overflow-y-auto custom-scrollbar"
-                  >
-                    <div className="hud-panel bracket p-5 bg-cyan-500/5 border-cyan-500/20 shrink-0">
-                      <h3 className="text-cyan-400 font-mono text-[10px] mb-4 uppercase tracking-widest flex items-center justify-between">
-                        <span className="flex items-center gap-2"><Activity className="w-3 h-3" /> Neural Analytics Projection</span>
-                        <span className="text-cyan-400/50 text-[9px]">LIVE</span>
-                      </h3>
-                      <div className="grid grid-cols-3 gap-3">
-                        {[
-                          { label: "CPU Load", value: `${stats.cpu.toFixed(1)}%`, color: "text-cyan-400", bg: "bg-cyan-500/10" },
-                          { label: "RAM Usage", value: `${stats.ram.toFixed(1)}%`, color: "text-violet-400", bg: "bg-violet-500/10" },
-                          { label: "Disk Usage", value: `${stats.disk.toFixed(1)}%`, color: "text-amber-400", bg: "bg-amber-500/10" },
-                        ].map((m, i) => (
-                          <div key={i} className={`${m.bg} border border-white/5 rounded-lg p-3 text-center`}>
-                            <div className="text-[9px] text-slate-500 uppercase mb-1">{m.label}</div>
-                            <div className={`text-2xl font-mono font-bold ${m.color}`}>{m.value}</div>
-                          </div>
-                        ))}
-                      </div>
+             <div className="flex-1 overflow-hidden flex flex-col gap-6">
+                <MissionTimeline />
+                
+                {/* Neural Thought Sequence */}
+                <div className="flex-[0.8] glass-panel hud-bracket hud-bracket-bottom-left bg-violet-950/5 border-violet-500/20 flex flex-col overflow-hidden">
+                  <div className="px-5 py-4 border-b border-violet-500/10 flex items-center justify-between shrink-0">
+                    <div className="flex items-center gap-3">
+                      <Layers className="w-3.5 h-3.5 text-violet-400" />
+                      <span className="text-xs font-bold font-sora text-white uppercase tracking-tight">Neural Sequence</span>
                     </div>
-
-                    <div className="hud-panel bracket p-5 bg-cyan-500/5 border-cyan-500/20 shrink-0">
-                      <h3 className="text-cyan-400 font-mono text-[10px] mb-4 uppercase tracking-widest">CPU Utilization — Live</h3>
-                      <div className="flex items-end gap-1 h-24 w-full">
-                        {[...Array(20)].map((_, i) => {
-                          const h = i === 19 ? stats.cpu : Math.max(5, Math.random() * 80 + 10);
-                          return (
-                            <motion.div key={i}
-                              className={`flex-1 rounded-t ${i === 19 ? "bg-cyan-400 shadow-[0_0_8px_#22D3EE]" : "bg-cyan-500/30"}`}
-                              initial={{ height: 0 }}
-                              animate={{ height: `${h}%` }}
-                              transition={{ duration: 0.5, delay: i * 0.02 }}
-                            />
-                          );
-                        })}
-                      </div>
-                      <div className="text-[9px] text-slate-600 font-mono mt-2 text-center uppercase tracking-widest">Past 20 Readings</div>
-                    </div>
-
-                    <div className="hud-panel bracket p-5 bg-cyan-500/5 border-cyan-500/20 shrink-0">
-                      <h3 className="text-cyan-400 font-mono text-[10px] mb-4 uppercase tracking-widest">Session Activity</h3>
-                      <div className="grid grid-cols-2 gap-3">
-                        {[
-                          { label: "Messages Sent", value: chatHistory.filter(m => m.role === "user").length, color: "text-violet-400" },
-                          { label: "AI Responses", value: chatHistory.filter(m => m.role === "jarvis").length, color: "text-emerald-400" },
-                          { label: "Telegram Msgs", value: telegramMessages.length, color: "text-amber-400" },
-                          { label: "Uptime", value: stats.uptime, color: "text-cyan-400" },
-                        ].map((s, i) => (
-                          <div key={i} className="bg-white/5 border border-white/5 rounded-lg p-3">
-                            <div className="text-[9px] text-slate-500 uppercase mb-1">{s.label}</div>
-                            <div className={`text-xl font-mono font-bold ${s.color}`}>{s.value}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-
-                {activeView === "network" && (
-                  <motion.div 
-                    key="network"
-                    initial={{ opacity: 0, rotateY: 90 }}
-                    animate={{ opacity: 1, rotateY: 0 }}
-                    exit={{ opacity: 0, rotateY: -90 }}
-                    className="absolute inset-0 flex flex-col gap-6 p-4"
-                  >
-                     <div className="hud-panel bracket flex-1 flex flex-col overflow-hidden bg-emerald-950/10 border-emerald-500/20 relative">
-                       <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(16,185,129,0.05)_0%,transparent_70%)] pointer-events-none" />
-                       
-                       <div className="px-6 py-4 border-b border-emerald-500/20 bg-emerald-500/5 flex items-center justify-between shrink-0">
-                         <div className="flex items-center gap-4">
-                           <div className="relative">
-                             <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center border border-emerald-500/30">
-                               <MessageSquare className="w-5 h-5 text-emerald-400" />
-                             </div>
-                             <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-emerald-400 rounded-full animate-pulse border-2 border-[#050812]" />
-                           </div>
-                           <div>
-                             <h3 className="text-emerald-400 font-mono text-xs uppercase tracking-widest font-bold">Telegram Communications Link</h3>
-                             <span className="text-[9px] text-emerald-400/60 font-mono uppercase tracking-[0.2em]">End-to-End Encrypted Tunnel</span>
-                           </div>
-                         </div>
-                         <div className="flex flex-col items-end">
-                           <span className="text-[10px] text-emerald-400 font-mono font-bold tracking-widest flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> ONLINE</span>
-                           <span className="text-[9px] text-emerald-400/50 font-mono tracking-widest">STATUS: <span className="text-emerald-400">NOMINAL</span></span>
-                         </div>
-                       </div>
-                       
-                       <div className="flex-1 overflow-y-auto p-6 custom-scrollbar flex flex-col gap-6 relative z-10">
-                         {telegramMessages.length === 0 ? (
-                           <div className="flex-1 flex flex-col items-center justify-center opacity-30 text-emerald-400">
-                             <div className="w-24 h-24 border border-emerald-500 border-dashed rounded-full flex items-center justify-center animate-[spin_10s_linear_infinite] mb-4">
-                               <Wifi className="w-8 h-8 animate-pulse" />
-                             </div>
-                             <span className="font-mono text-[10px] tracking-[0.3em] uppercase">Listening for mobile transmissions...</span>
-                           </div>
-                         ) : (
-                           telegramMessages.map((msg, i) => (
-                             <motion.div 
-                               initial={{ opacity: 0, x: -20 }}
-                               animate={{ opacity: 1, x: 0 }}
-                               key={i} 
-                               className="flex flex-col gap-3 relative pl-6"
-                             >
-                               <div className="absolute left-0 top-0 bottom-0 w-px bg-gradient-to-b from-emerald-500/50 to-transparent" />
-                               <div className="absolute left-[-3px] top-2 w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                               
-                               <div className="text-[10px] font-mono text-emerald-400/60 uppercase tracking-widest flex gap-2 items-center">
-                                 <span>{msg.ts}</span>
-                                 <span className="w-1 h-1 bg-emerald-500/50 rounded-full" />
-                                 <span>Mobile Relay</span>
-                               </div>
-                               
-                               <div className="bg-emerald-950/30 border border-emerald-500/20 rounded-lg p-4 font-mono shadow-[0_0_15px_rgba(16,185,129,0.05)] backdrop-blur-sm">
-                                 <div className="mb-3">
-                                   <div className="text-[9px] text-violet-400 uppercase tracking-widest mb-1 font-bold">USER_ALPHA:</div>
-                                   <div className="text-[13px] text-slate-300 pl-2 border-l-2 border-violet-500/30">{msg.user_text}</div>
-                                 </div>
-                                 <div>
-                                   <div className="text-[9px] text-emerald-400 uppercase tracking-widest mb-1 font-bold">SYS_RESPONSE:</div>
-                                   <div className="text-[13px] text-emerald-50 pl-2 border-l-2 border-emerald-500/50 text-shadow-sm">{msg.text}</div>
-                                 </div>
-                               </div>
-                             </motion.div>
-                           ))
-                         )}
-                       </div>
-                       
-                       <div className="px-6 py-3 border-t border-emerald-500/20 bg-emerald-500/5 grid grid-cols-4 gap-4 text-[9px] font-mono shrink-0">
-                          <div className="text-emerald-400 flex flex-col"><span className="text-emerald-400/50">PROTOCOL</span><span>TG-SEC-9</span></div>
-                          <div className="text-emerald-400 flex flex-col"><span className="text-emerald-400/50">PACKET LOSS</span><span>0.00%</span></div>
-                          <div className="text-cyan-400 flex flex-col"><span className="text-cyan-400/50">UP/DOWN</span><span>840M / 1.2G</span></div>
-                          <div className="text-amber-400 flex flex-col"><span className="text-amber-400/50">SERVER LOAD</span><span>{(stats.cpu).toFixed(1)}%</span></div>
-                       </div>
-                     </div>
-                  </motion.div>
-                )}
-
-                {activeView === "memory" && (
-                  <motion.div 
-                    key="memory"
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 1.05 }}
-                    className="absolute inset-0 flex flex-col gap-4 p-4 overflow-y-auto custom-scrollbar"
-                  >
-                    <div className="hud-panel bracket p-5 bg-purple-500/5 border-purple-500/20 shrink-0">
-                      <h3 className="text-purple-400 font-mono text-[10px] mb-5 uppercase tracking-widest flex items-center gap-2">
-                        <Cpu className="w-3 h-3" /> Memory Allocation Matrix — Live
-                      </h3>
-                      <div className="space-y-5">
-                        {[
-                          { label: "RAM Utilization", value: stats.ram, color: "bg-purple-500", glow: "shadow-[0_0_10px_#A78BFA]", text: "text-purple-400" },
-                          { label: "Disk Usage", value: stats.disk, color: "bg-cyan-500", glow: "shadow-[0_0_10px_#22D3EE]", text: "text-cyan-400" },
-                          { label: "CPU Load", value: stats.cpu, color: "bg-amber-500", glow: "shadow-[0_0_10px_#F59E0B]", text: "text-amber-400" },
-                        ].map((item, i) => (
-                          <div key={i} className="space-y-2">
-                            <div className="flex justify-between text-[10px] font-mono uppercase">
-                              <span className="text-slate-400">{item.label}</span>
-                              <span className={item.text}>{item.value.toFixed(1)}%</span>
-                            </div>
-                            <div className="h-2.5 bg-white/5 rounded-full overflow-hidden">
-                              <motion.div 
-                                initial={{ width: 0 }}
-                                animate={{ width: `${item.value}%` }}
-                                transition={{ duration: 1, ease: "easeOut" }}
-                                className={`h-full ${item.color} ${item.glow} rounded-full`}
-                              />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="hud-panel bracket p-5 bg-purple-500/5 border-purple-500/20 shrink-0">
-                      <h3 className="text-purple-400 font-mono text-[10px] mb-4 uppercase tracking-widest">Memory Segments</h3>
-                      <div className="grid grid-cols-2 gap-3">
-                        {[
-                          { label: "Chat Buffer", value: chatHistory.length, unit: "msgs", color: "text-violet-400" },
-                          { label: "Telegram Cache", value: telegramMessages.length, unit: "msgs", color: "text-emerald-400" },
-                          { label: "Log Entries", value: logs.length, unit: "entries", color: "text-cyan-400" },
-                          { label: "Active Agents", value: agents.length, unit: "agents", color: "text-amber-400" },
-                        ].map((s, i) => (
-                          <div key={i} className="bg-white/5 border border-white/5 rounded-lg p-3">
-                            <div className="text-[9px] text-slate-500 uppercase mb-1">{s.label}</div>
-                            <div className={`text-xl font-mono font-bold ${s.color}`}>{s.value} <span className="text-[10px] opacity-50">{s.unit}</span></div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="hud-panel bracket p-5 bg-purple-500/5 border-purple-500/20 shrink-0">
-                      <h3 className="text-purple-400 font-mono text-[10px] mb-3 uppercase tracking-widest">System Uptime</h3>
-                      <div className="text-3xl font-mono font-bold text-purple-300 text-center py-4">{stats.uptime}</div>
-                    </div>
-                  </motion.div>
-                )}
-
-                {activeView === "files" && (
-                  <motion.div 
-                    key="files"
-                    initial={{ opacity: 0, x: 50 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -50 }}
-                    className="absolute inset-0 flex flex-col gap-4 p-4 overflow-y-auto custom-scrollbar"
-                  >
-                    <div className="hud-panel bracket p-5 bg-amber-500/5 border-amber-500/20 shrink-0">
-                      <h3 className="text-amber-400 font-mono text-[10px] mb-1 uppercase tracking-widest flex items-center gap-2">
-                        <FolderOpen className="w-3 h-3" /> Encrypted Data Repository
-                      </h3>
-                      <div className="text-[9px] text-amber-400/40 font-mono uppercase tracking-widest mb-4">Root: D:\vs_code\jarvis\</div>
-                      <div className="space-y-2">
-                        {[
-                          { name: "server.py", size: "10.3 KB", type: "py", color: "text-amber-400", badge: "CORE" },
-                          { name: "jarviss.py", size: "2.8 KB", type: "py", color: "text-amber-400", badge: "AGENT" },
-                          { name: "telegram_bot.py", size: "1.8 KB", type: "py", color: "text-amber-400", badge: "BOT" },
-                          { name: ".env", size: "256 B", type: "env", color: "text-red-400", badge: "SECRET" },
-                          { name: "jprompt.py", size: "3.2 KB", type: "py", color: "text-cyan-400", badge: "PROMPT" },
-                          { name: "tool.py", size: "5.4 KB", type: "py", color: "text-violet-400", badge: "TOOLS" },
-                        ].map((file, i) => (
-                          <motion.div 
-                            key={i}
-                            whileHover={{ x: 4 }}
-                            className="flex items-center justify-between p-3 bg-white/5 border border-white/5 rounded-lg hover:bg-amber-500/10 hover:border-amber-500/20 transition-all cursor-pointer group"
-                          >
-                            <div className="flex items-center gap-3">
-                              <div className="w-7 h-7 bg-amber-500/10 border border-amber-500/20 rounded flex items-center justify-center">
-                                <FolderOpen className="w-3 h-3 text-amber-500" />
-                              </div>
-                              <div>
-                                <div className={`text-xs font-mono ${file.color} group-hover:text-amber-300`}>{file.name}</div>
-                                <div className="text-[9px] text-slate-600 font-mono">{file.size}</div>
-                              </div>
-                            </div>
-                            <span className="text-[8px] font-mono font-bold px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">{file.badge}</span>
-                          </motion.div>
-                        ))}
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-
-                {activeView === "devtools" && (
-                   <motion.div 
-                     key="devtools"
-                     initial={{ opacity: 0, y: 30 }}
-                     animate={{ opacity: 1, y: 0 }}
-                     exit={{ opacity: 0, y: 30 }}
-                     className="absolute inset-0 p-4 flex flex-col gap-4"
-                   >
-                      <div className="hud-panel bracket p-0 bg-[#020B18] border-emerald-500/20 flex-1 flex flex-col overflow-hidden font-mono text-xs">
-                        <div className="flex items-center gap-3 px-4 py-3 border-b border-emerald-500/20 bg-emerald-500/5 shrink-0">
-                          <Terminal className="w-4 h-4 text-emerald-400" />
-                          <span className="text-emerald-400 font-bold text-[10px] uppercase tracking-widest">ROOT@JARVIS_CORE: ~ /dev/console</span>
-                          <div className="ml-auto flex items-center gap-2">
-                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                            <span className="text-[9px] text-emerald-400/50">LIVE</span>
-                          </div>
-                        </div>
-                        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-1.5">
-                          <p className="text-emerald-400/40"># ═══ JARVIS DIAGNOSTIC CONSOLE ═══</p>
-                          <p className="text-emerald-400"><span className="text-emerald-400/50">$</span> system.status.verify()</p>
-                          <p className="text-emerald-300">[OK] CPU: {stats.cpu.toFixed(1)}% — NOMINAL</p>
-                          <p className="text-emerald-300">[OK] RAM: {stats.ram.toFixed(1)}% — STABLE</p>
-                          <p className="text-emerald-300">[OK] DISK: {stats.disk.toFixed(1)}% — LINKED</p>
-                          <p className="text-cyan-400">[OK] WEBSOCKET: CONNECTED — {agents.length} AGENT(S) ACTIVE</p>
-                          <p className="text-cyan-400">[OK] TELEGRAM: UPLINK ESTABLISHED</p>
-                          <p className="text-emerald-400/40">---</p>
-                          <p className="text-emerald-400"><span className="text-emerald-400/50">$</span> log.tail --lines=10</p>
-                          {logs.slice(0, 10).map((log: any, i: number) => (
-                            <p key={i} className={
-                              log.severity === "error" ? "text-red-400" :
-                              log.severity === "success" ? "text-emerald-300" :
-                              "text-slate-400"
-                            }>
-                              [{log.ts}] [{log.source}] {log.message}
-                            </p>
-                          ))}
-                          <div className="flex items-center gap-1">
-                            <span className="text-emerald-400">$</span>
-                            <motion.span
-                              animate={{ opacity: [1, 0, 1] }}
-                              transition={{ duration: 0.8, repeat: Infinity }}
-                              className="inline-block w-2 h-4 bg-emerald-400 align-middle"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                   </motion.div>
-                )}
-
-                {activeView === "settings" && (
-                   <motion.div 
-                     key="settings"
-                     initial={{ opacity: 0, scale: 1.05 }}
-                     animate={{ opacity: 1, scale: 1 }}
-                     exit={{ opacity: 0, scale: 0.95 }}
-                     className="absolute inset-0 p-4 overflow-y-auto custom-scrollbar"
-                   >
-                      <div className="hud-panel bracket p-5 bg-white/3 border-slate-700/50 space-y-6">
-                        <div>
-                          <h3 className="text-slate-300 font-mono text-[10px] mb-1 uppercase tracking-widest flex items-center gap-2"><Zap className="w-3 h-3 text-cyan-400" /> System Configuration</h3>
-                          <p className="text-[9px] text-slate-600 font-mono">Core runtime parameters</p>
-                        </div>
-
-                        <div className="space-y-3">
-                          {[
-                            { label: "Telegram Bridge", desc: "Sync mobile conversations to dashboard", on: true, color: "bg-emerald-400" },
-                            { label: "Langchain Debug", desc: "Output AI thought chain to terminal", on: true, color: "bg-cyan-400" },
-                            { label: "Voice Synthesis", desc: "Text-to-speech response playback", on: true, color: "bg-violet-400" },
-                            { label: "Auto-Reconnect", desc: "Reconnect WebSocket on disconnect", on: true, color: "bg-emerald-400" },
-                          ].map((s, i) => (
-                            <div key={i} className="flex items-center justify-between p-4 bg-white/5 rounded-lg border border-white/5 hover:border-white/10 transition-colors">
-                              <div>
-                                <div className="text-xs font-mono text-slate-200 uppercase mb-1">{s.label}</div>
-                                <div className="text-[9px] text-slate-600 font-mono">{s.desc}</div>
-                              </div>
-                              <div className={`w-10 h-5 ${s.on ? "bg-emerald-500/20 border-emerald-500/40" : "bg-white/5 border-white/10"} border rounded-full relative cursor-pointer shrink-0`}>
-                                <div className={`absolute ${s.on ? "right-1" : "left-1"} top-1 w-3 h-3 ${s.on ? `${s.color} shadow-[0_0_8px_currentColor]` : "bg-slate-600"} rounded-full transition-all`} />
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-
-                        <div className="border-t border-white/5 pt-5 space-y-3">
-                          <h4 className="text-slate-500 font-mono text-[9px] uppercase tracking-widest">Connection Info</h4>
-                          {[
-                            { label: "Backend URL", value: "ws://localhost:8000/ws" },
-                            { label: "DB Health", value: stats.db_health },
-                            { label: "Uptime", value: stats.uptime },
-                          ].map((c, i) => (
-                            <div key={i} className="flex items-center justify-between p-3 bg-white/3 rounded border border-white/5 font-mono text-[10px]">
-                              <span className="text-slate-500 uppercase">{c.label}</span>
-                              <span className="text-cyan-400">{c.value}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                   </motion.div>
-                )}
-
-
-              </AnimatePresence>
-           </div>
-           
-           <div className="h-[100px] shrink-0 mt-4">
-             <SystemTelemetry stats={stats} />
-           </div>
-        </div>
-
-        {/* Right Column */}
-        <div className="flex flex-col gap-6 overflow-hidden">
-           <div className="flex-1 overflow-hidden">
-             {activeView === "network" ? (
-                <div className="hud-panel bracket h-full flex flex-col p-6 bg-slate-950/40 backdrop-blur-xl border-emerald-500/20 shadow-2xl items-center justify-center relative overflow-hidden">
-                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-emerald-500 to-transparent opacity-50" />
-                  <div className="w-24 h-24 rounded-full border-2 border-emerald-500/20 flex items-center justify-center mb-6 relative">
-                    <div className="absolute inset-0 rounded-full border-t-2 border-emerald-400 animate-spin" />
-                    <Wifi className="w-10 h-10 text-emerald-400 animate-pulse" />
+                    <div className="w-1.5 h-1.5 rounded-full bg-violet-500 animate-pulse shadow-[0_0_8px_#8b5cf6]" />
                   </div>
-                  <h3 className="font-mono text-emerald-400 tracking-[0.2em] uppercase text-sm mb-2 text-center">Telegram Satellite Uplink</h3>
-                  <div className="text-[10px] text-emerald-400/50 font-mono text-center uppercase tracking-widest max-w-[200px] leading-relaxed">
-                    Neural interface suspended. Direct secure transmission line to mobile device active.
-                  </div>
-                  <div className="grid grid-cols-2 gap-4 mt-8 w-full">
-                    <div className="bg-emerald-500/10 border border-emerald-500/20 rounded p-3 text-center">
-                      <div className="text-[9px] text-emerald-400/50 mb-1">ENCRYPTION</div>
-                      <div className="text-[10px] text-emerald-400 font-bold">AES-256</div>
-                    </div>
-                    <div className="bg-emerald-500/10 border border-emerald-500/20 rounded p-3 text-center">
-                      <div className="text-[9px] text-emerald-400/50 mb-1">LATENCY</div>
-                      <div className="text-[10px] text-emerald-400 font-bold">12ms</div>
-                    </div>
-                    <div className="bg-emerald-500/10 border border-emerald-500/20 rounded p-3 text-center col-span-2">
-                      <div className="text-[9px] text-emerald-400/50 mb-1">TOTAL TRANSMISSIONS</div>
-                      <div className="text-xl text-emerald-400 font-bold">{telegramMessages.length}</div>
-                    </div>
+                  
+                  <div className="flex-1 overflow-y-auto p-5 custom-scrollbar bg-black/20">
+                    <AnimatePresence mode="popLayout">
+                      {!thoughtProcess ? (
+                        <div className="h-full flex flex-col items-center justify-center opacity-10 text-violet-400 gap-3">
+                          <Cpu className="w-10 h-10 animate-spin-slow" />
+                          <span className="text-[10px] font-mono uppercase tracking-[0.4em]">Standby // Neural Link Idle</span>
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          <div className="flex items-center gap-3 pb-3 border-b border-white/5 opacity-40 italic">
+                             <Search className="w-3 h-3" />
+                             <span className="text-[9px] font-mono truncate">{thoughtProcess.query}</span>
+                          </div>
+                          {thoughtProcess.steps.map((step: any, i: number) => (
+                            <motion.div
+                              key={i}
+                              initial={{ opacity: 0, x: -10 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              className={`p-4 rounded-xl border ${
+                                step.type === "tool_call" ? "bg-amber-500/5 border-amber-500/20 text-amber-100" :
+                                step.type === "tool_result" ? "bg-emerald-500/5 border-emerald-500/20 text-emerald-100" :
+                                "bg-violet-500/5 border-violet-500/20 text-violet-100"
+                              }`}
+                            >
+                              <div className="text-[10px] font-bold font-sora uppercase mb-1">{step.label}</div>
+                              {step.detail && <div className="text-[11px] font-mono opacity-60 leading-relaxed">{step.detail}</div>}
+                            </motion.div>
+                          ))}
+                        </div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 </div>
-             ) : (
-               <ChatPanel history={chatHistory} isSpeaking={isSpeaking} />
-             )}
+             </div>
+          </section>
+        )}
+
+        {/* CENTER COLUMN: The Core Projection */}
+        <section className="flex flex-col gap-6 overflow-hidden">
+           <div className="flex-1 relative glass-panel hud-bracket hud-bracket-top-left hud-bracket-bottom-right bg-blue-900/5 border-blue-500/10 flex flex-col overflow-hidden">
+              <div className="absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-blue-500/10 to-transparent pointer-events-none" />
+              
+              <AnimatePresence mode="wait">
+                 {activeView === "home" ? (
+                   <motion.div key="core" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, filter: "blur(20px)" }} className="flex-1 flex items-center justify-center">
+                     <HologramCore state={agentState} />
+                   </motion.div>
+                 ) : (
+                   <motion.div key="other" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="flex-1 p-8 overflow-y-auto custom-scrollbar">
+                      {activeView === "analytics" && (
+                         <div className="flex-1 flex flex-col gap-6 h-full p-6">
+                            <div className="flex items-center gap-4 opacity-70 border-b border-blue-500/10 pb-4 mb-2">
+                               <Activity className="w-8 h-8 animate-pulse text-blue-400" />
+                               <div>
+                                  <h2 className="text-xl font-sora font-bold uppercase tracking-[0.2em] text-blue-100">System Architecture & Stack</h2>
+                                  <span className="text-xs font-mono text-blue-400">Hardware Diagnostics, Capabilities & Tech Stack Overview</span>
+                               </div>
+                            </div>
+                            <div className="flex-1 h-full min-h-[500px]">
+                               <SystemTelemetry stats={statsHistory} sysStats={stats} />
+                            </div>
+                         </div>
+                      )}
+                      {activeView === "network" && (
+                         <div className="h-full flex flex-col gap-4">
+                            <div className="flex items-center justify-between opacity-70">
+                               <div className="flex items-center gap-4">
+                                  <Wifi className="w-8 h-8 animate-pulse text-blue-400" />
+                                  <div>
+                                     <h2 className="text-xl font-sora font-bold uppercase tracking-[0.2em] text-blue-100">Telegram Uplink</h2>
+                                     <span className="text-xs font-mono text-blue-400">Active Encrypted Tunnel: External Communications</span>
+                                  </div>
+                               </div>
+                               <div className="flex gap-2">
+                                  <div className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-mono font-bold uppercase rounded-full">Secure Link</div>
+                                  <div className="px-3 py-1 bg-blue-500/10 border border-blue-500/30 text-blue-400 text-[10px] font-mono font-bold uppercase rounded-full">Port 8443</div>
+                               </div>
+                            </div>
+                            
+                            <div className="flex-1 overflow-hidden min-h-[500px]">
+                               <ChatPanel history={telegramChatHistory} isSpeaking={false} />
+                            </div>
+                         </div>
+                      )}
+                      {activeView === "devtools" && (
+                         <div className="h-full glass-panel bg-black/80 font-mono p-6 text-xs text-blue-400">
+                            <div className="mb-4 border-b border-blue-500/30 pb-2">JARVIS_CORE @ SHELL-01: DIAGNOSTIC_MODE</div>
+                            <div className="space-y-1">
+                               <p>{">"} BOOT_SEQUENCE: OK</p>
+                               <p>{">"} NEURAL_SYNC: 98.42%</p>
+                               <p>{">"} UPTIME: {stats.uptime}</p>
+                               <p className="text-white/40 mt-10 animate-pulse">_ AWAITING COMMAND...</p>
+                            </div>
+                         </div>
+                      )}
+                   </motion.div>
+                 )}
+              </AnimatePresence>
+
+              {/* Decorative Coordinates */}
+              <div className="absolute bottom-10 left-10 text-[8px] font-mono text-blue-400 opacity-30 flex flex-col gap-1">
+                <span>LAT: 55.7558° N</span>
+                <span>LON: 37.6173° E</span>
+              </div>
            </div>
-           <div className="h-[200px] shrink-0 overflow-hidden">
-             <LiveLog externalLogs={logs} />
-           </div>
-        </div>
+           
+           {activeView !== "network" && activeView !== "analytics" && (
+             <div className="h-[350px] shrink-0">
+               <AgentFleet agents={agents} />
+             </div>
+           )}
+        </section>
+
+        {/* RIGHT COLUMN: Dialogue & Intelligence */}
+        {activeView !== "network" && activeView !== "analytics" && (
+          <section className="flex flex-col gap-6 overflow-hidden">
+             <div className="flex-1 overflow-hidden">
+                <ChatPanel history={chatHistory} isSpeaking={isSpeaking} />
+             </div>
+             <div className="h-[350px] shrink-0">
+                <LiveLog externalLogs={logs} />
+             </div>
+          </section>
+        )}
+        
       </main>
 
+      {/* GLOBAL FOOTER TASKBAR */}
       <BottomNav activeView={activeView} onActiveViewChange={setActiveView} />
-
-      <div className="pointer-events-none fixed top-0 left-0 w-full h-full opacity-[0.08] z-[-1]" 
-           style={{ background: "radial-gradient(circle at 10% 10%, #38BDF8 0%, transparent 40%), radial-gradient(circle at 90% 90%, #6366F1 0%, transparent 40%)" }} />
-      
-      <div className="pointer-events-none fixed inset-0 z-[60] opacity-[0.03] bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_2px,3px_100%]" />
     </div>
   );
 }

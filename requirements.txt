@@ -47,3 +47,7 @@ Pillow
 pyautogui
 pynput
 pygetwindow
+openwakeword
+onnxruntime
+sounddevice
+SpeechRecognition

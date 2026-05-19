@@ -1,92 +1,106 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ScrollText, Circle } from "lucide-react";
-
-type Severity = "info" | "warn" | "error" | "success" | "debug";
+import { Terminal, ShieldAlert, Cpu, AlertCircle, Database, Search } from "lucide-react";
+import { useEffect, useRef } from "react";
 
 interface LogEntry {
   id: number;
   ts: string;
-  severity: Severity;
+  severity: string;
   source: string;
   message: string;
 }
 
-const SEV: Record<Severity, { label: string; color: string }> = {
-  info:    { label: "INFO",  color: "#38BDF8" },
-  warn:    { label: "WARN",  color: "#F59E0B" },
-  error:   { label: "ERROR", color: "#EF4444" },
-  success: { label: "OK",    color: "#34D399" },
-  debug:   { label: "DEBUG", color: "#64748b" },
-};
-
-export default function LiveLog({ externalLogs = [] }: { externalLogs?: LogEntry[] }) {
-  const [filter, setFilter] = useState<Severity | "all">("all");
-  const bottomRef = useRef<HTMLDivElement>(null);
-
-  const visible = filter === "all" ? externalLogs : externalLogs.filter((l) => l.severity === filter);
+export default function LiveLog({ externalLogs = [] }: { externalLogs: LogEntry[] }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: "smooth" });
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
     }
   }, [externalLogs]);
 
+  const severityConfig: Record<string, { color: string; bg: string; icon: any }> = {
+    info:     { color: "text-blue-400", bg: "bg-blue-400/10", icon: Terminal },
+    warning:  { color: "text-amber-400", bg: "bg-amber-400/10", icon: AlertCircle },
+    warn:     { color: "text-amber-400", bg: "bg-amber-400/10", icon: AlertCircle },
+    error:    { color: "text-red-400", bg: "bg-red-400/10", icon: ShieldAlert },
+    success:  { color: "text-emerald-400", bg: "bg-emerald-400/10", icon: Cpu },
+    critical: { color: "text-rose-500", bg: "bg-rose-500/20", icon: ShieldAlert },
+  };
+
   return (
-    <div className="hud-panel bracket flex flex-col h-full overflow-hidden">
-      <div className="flex items-center justify-between px-4 pt-3 pb-2 shrink-0 border-b border-white/5">
-        <div className="flex items-center gap-2">
-          <ScrollText className="w-4 h-4 text-cyan-400" />
-          <span className="text-xs font-mono text-slate-400 uppercase tracking-widest">Real-Time Core Stream</span>
+    <div className="glass-panel hud-bracket hud-bracket-bottom-right flex flex-col h-full bg-blue-950/5">
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-4 border-b border-white/5 bg-white/[0.02]">
+        <div className="flex items-center gap-3">
+          <div className="p-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
+            <Terminal className="w-4 h-4 text-blue-400" />
+          </div>
+          <div>
+            <span className="block text-xs font-bold font-sora text-white uppercase tracking-tight">Kernel Debugger</span>
+            <span className="block text-[8px] font-mono text-blue-400/40 uppercase tracking-[0.3em]">Live Stream Buffer</span>
+          </div>
         </div>
-        <div className="flex items-center gap-1">
-          {(["all", "info", "success", "error"] as const).map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className="text-[9px] font-mono px-2 py-0.5 rounded transition-all uppercase tracking-wider"
-              style={{
-                background: filter === f ? "rgba(56,189,248,0.15)" : "transparent",
-                color: filter === f ? "#38BDF8" : "#475569",
-              }}
-            >
-              {f}
-            </button>
-          ))}
+        <div className="flex items-center gap-4">
+           <div className="flex items-center gap-2">
+              <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+              <span className="text-[9px] font-mono text-blue-400/40 uppercase tracking-widest font-bold">Relay_Active</span>
+           </div>
+           <Search className="w-3.5 h-3.5 text-blue-400/20 hover:text-blue-400 cursor-pointer transition-colors" />
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 py-2 font-mono text-[10px] flex flex-col gap-0.5">
-        {externalLogs.length === 0 ? (
-          <div className="flex-1 flex items-center justify-center text-slate-700 italic">
-            NO LOG DATA RECEIVED
-          </div>
-        ) : (
-          <AnimatePresence initial={false}>
-            {visible.map((log) => {
-              const sev = SEV[log.severity] || SEV.info;
+      <div 
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-2.5 custom-scrollbar bg-black/40"
+      >
+        <AnimatePresence initial={false}>
+          {externalLogs.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center opacity-10 gap-3">
+               <Database className="w-8 h-8 text-blue-400 animate-pulse" />
+               <span className="text-[9px] font-mono uppercase tracking-[0.4em]">Initializing Data Stream...</span>
+            </div>
+          ) : (
+            externalLogs.map((log) => {
+              const cfg = severityConfig[log.severity.toLowerCase()] || severityConfig.info;
               return (
                 <motion.div
                   key={log.id}
-                  initial={{ opacity: 0, x: -5 }}
+                  initial={{ opacity: 0, x: 10 }}
                   animate={{ opacity: 1, x: 0 }}
-                  className="flex items-start gap-2 rounded px-2 py-0.5 transition-colors hover:bg-white/[0.02]"
+                  transition={{ duration: 0.2 }}
+                  className="group relative flex gap-4 p-2 rounded hover:bg-white/[0.02] transition-colors overflow-hidden"
                 >
-                  <span className="text-slate-600 shrink-0 tabular-nums">{log.ts}</span>
-                  <span className="shrink-0 w-11 text-right tabular-nums font-semibold uppercase" style={{ color: sev.color }}>
-                    {sev.label}
-                  </span>
-                  <span className="text-slate-500 shrink-0 w-20 truncate">[{log.source}]</span>
-                  <span className="text-slate-300 truncate flex-1">{log.message}</span>
+                  <div className={`shrink-0 w-[2px] rounded-full group-hover:h-full transition-all ${cfg.bg}`} />
+                  
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                         <span className="text-[9px] font-mono text-blue-400/30 whitespace-nowrap">[{log.ts}]</span>
+                         <span className={`text-[8px] font-mono font-bold px-1.5 py-0.5 rounded ${cfg.bg} ${cfg.color} uppercase tracking-tighter`}>
+                           {log.severity}
+                         </span>
+                         <span className="text-[9px] font-mono text-blue-400/50 uppercase tracking-widest">:: {log.source}</span>
+                      </div>
+                    </div>
+                    <div className="text-[11px] font-mono text-blue-100/70 group-hover:text-blue-100 transition-colors leading-relaxed">
+                      {log.message}
+                    </div>
+                  </div>
+
+                  {/* Aesthetic decorative bit */}
+                  <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-blue-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                 </motion.div>
               );
-            })}
-          </AnimatePresence>
-        )}
-        <div ref={bottomRef} />
+            })
+          )}
+        </AnimatePresence>
       </div>
+
+      {/* Footer Decos */}
+      <div className="h-2 bg-gradient-to-r from-blue-500/20 via-transparent to-blue-500/10 opacity-30" />
     </div>
   );
 }

@@ -3,7 +3,6 @@
 import { motion } from "framer-motion";
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import clsx from "clsx";
 
 type Trend = "up" | "down" | "flat";
 
@@ -20,56 +19,52 @@ interface MetricCardProps {
 }
 
 const TREND_ICON = { up: TrendingUp, down: TrendingDown, flat: Minus };
-const TREND_COLOR = { up: "#34D399", down: "#EF4444", flat: "#64748b" };
+const TREND_COLOR = { up: "#10b981", down: "#ef4444", flat: "#64748b" };
 
 export default function MetricCard({
   label, value, sub, icon: Icon, trend = "flat",
-  trendValue, color = "#38BDF8", delay = 0, pulse = false,
+  trendValue, color = "#3b82f6", delay = 0, pulse = false,
 }: MetricCardProps) {
   const TrendIcon = TREND_ICON[trend];
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay, duration: 0.45, ease: "easeOut" }}
-      whileHover={{ y: -2, boxShadow: `0 0 24px rgba(56,189,248,0.15)` }}
-      className="hud-panel bracket p-4 flex flex-col gap-2 cursor-default select-none"
-      style={{ borderColor: `${color}22` }}
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ delay, duration: 0.5 }}
+      whileHover={{ scale: 1.02 }}
+      className="glass-panel p-5 flex flex-col gap-3 relative group overflow-hidden"
     >
+      <div className="absolute top-0 left-0 w-1 h-12 bg-blue-500/30 group-hover:bg-blue-500 transition-colors" />
+      
       <div className="flex items-start justify-between">
         <div
-          className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-          style={{ background: `${color}15`, border: `1px solid ${color}30` }}
+          className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-blue-500/10 border border-blue-500/20"
         >
-          <Icon className="w-4 h-4" style={{ color }} />
+          <Icon className="w-5 h-5 text-blue-400" />
         </div>
         {trend !== "flat" && (
-          <div className="flex items-center gap-1" style={{ color: TREND_COLOR[trend] }}>
+          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-black/40 border border-white/5" style={{ color: TREND_COLOR[trend] }}>
             <TrendIcon className="w-3 h-3" />
-            <span className="text-[10px] font-mono">{trendValue}</span>
+            <span className="text-[10px] font-mono font-bold">{trendValue}</span>
           </div>
         )}
       </div>
 
       <div>
-        <div className="flex items-baseline gap-1">
-          <span
-            className={clsx("text-2xl font-bold font-mono animate-counter", pulse && "animate-blink")}
-            style={{ color }}
-          >
+        <div className="text-[10px] font-mono text-blue-400/40 uppercase tracking-[0.2em] mb-1">{label}</div>
+        <div className="flex items-baseline gap-2">
+          <span className={`text-2xl font-bold font-sora text-white ${pulse ? "animate-pulse" : ""}`}>
             {value}
           </span>
+          {sub && <span className="text-[10px] font-mono text-blue-400/20 uppercase">{sub}</span>}
         </div>
-        <div className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mt-0.5">{label}</div>
-        {sub && <div className="text-[10px] text-slate-600 mt-0.5">{sub}</div>}
       </div>
 
-      {/* Bottom glow line */}
-      <div
-        className="absolute bottom-0 left-4 right-4 h-px rounded-full"
-        style={{ background: `linear-gradient(90deg,transparent,${color}40,transparent)` }}
-      />
+      {/* Decorative element */}
+      <div className="absolute bottom-2 right-2 opacity-5">
+         <Icon className="w-12 h-12" />
+      </div>
     </motion.div>
   );
 }

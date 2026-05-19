@@ -56,6 +56,35 @@ def get_weather_data_tool(input_data : str) -> str:
   return get_weather_data(input_data)
 
 
+@tool("Search_Local_Files_Tool", description=search_local_files_tool_description)
+def search_local_files_tool(input_data: str) -> str:
+    return search_local_files(input_data)
+
+
+@tool("Share_File_Tool", description=share_file_tool_description)
+def share_file_tool(input_data: str) -> str:
+    return share_local_file(input_data)
+
+@tool("Get_WhatsApp_Chats", description=get_whatsapp_chats_description)
+def get_whatsapp_chats_tool(input_data: str) -> str:
+    return get_whatsapp_chats()
+
+@tool("Read_WhatsApp_Messages", description=get_whatsapp_messages_description)
+def read_whatsapp_messages_tool(input_data: str) -> str:
+    return get_whatsapp_messages(input_data)
+
+@tool("Send_WhatsApp_Media", description=send_whatsapp_media_description)
+def send_whatsapp_media_tool(input_data: str) -> str:
+    return send_whatsapp_media(input_data)
+
+@tool("Add_Contact_Tool", description=add_contact_tool_description)
+def add_contact_tool(input_data: str) -> str:
+    return add_contact_to_db(input_data)
+
+@tool("Browser_Control_Tool", description=browser_control_tool_description)
+def browser_control_tool(input_data: str) -> str:
+    return browser_control(input_data)
+
 
 # # Tool definition
 # website_opener_tool = Tool.from_function(

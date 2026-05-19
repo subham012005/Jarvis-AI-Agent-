@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+neonize
+pydantic
+qrcode
+requests
+python-multipart
+pillow
